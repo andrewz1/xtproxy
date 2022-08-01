@@ -9,11 +9,16 @@ import (
 
 const (
 	defaultKeepAlive = 10 * time.Second
+	defaultLingerSec = 5
 )
 
 type ListenConfig struct {
 	net.ListenConfig
 	ctx context.Context
+}
+
+type Listener struct {
+	net.Listener
 }
 
 var (
@@ -50,9 +55,37 @@ func (c *ListenConfig) lControl(network, address string, rc syscall.RawConn) err
 }
 
 func (c *ListenConfig) Listen(network, address string) (net.Listener, error) {
-	return c.ListenConfig.Listen(c.ctx, network, address)
+	ln, err := c.ListenConfig.Listen(c.ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &Listener{Listener: ln}, nil
 }
 
 func Listen(network, address string) (net.Listener, error) {
 	return lc.Listen(network, address)
+}
+
+func (l *Listener) Accept() (net.Conn, error) {
+	cn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			cn.Close()
+		}
+	}()
+	tcn, ok := cn.(*net.TCPConn)
+	if !ok {
+		err = net.UnknownNetworkError(cn.LocalAddr().Network())
+		return nil, err
+	}
+	if err = tcn.SetLinger(defaultLingerSec); err != nil {
+		return nil, err
+	}
+	if err = tcn.SetNoDelay(true); err != nil {
+		return nil, err
+	}
+	return tcn, nil
 }
